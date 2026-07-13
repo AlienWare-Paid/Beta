@@ -1,0 +1,830 @@
+-- ==============================================
+-- ✅ UPDATED: HUD & Aim Part Only Show When Target Exists
+-- ==============================================
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
+local Math = math
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- THEME
+local C = {
+    MainGreen = Color3.fromHex("#39FF14"),
+    DarkBG = Color3.fromHex("#050706"),
+    SideBG = Color3.fromHex("#101512"),
+    ToggleOffBg = Color3.fromHex("#222222"),
+    ToggleOffKnob = Color3.fromHex("#999999"),
+    InputBg = Color3.fromHex("#181C1A"),
+    White = Color3.new(1,1,1),
+    Red = Color3.fromHex("#FF3333")
+}
+
+-- SOUNDS
+local Sounds = {
+    ToggleGUI = "rbxassetid://97904400516560",
+    TabSwitch = "rbxassetid://117570443671176",
+    Click = "rbxassetid://97904400516560"
+}
+local function PlaySound(Id)
+    local S = Instance.new("Sound")
+    S.SoundId = Id
+    S.Volume = 0.35
+    S.Parent = SoundService
+    S:Play()
+    task.delay(S.TimeLength, function() S:Destroy() end)
+end
+
+-- ANIMATION PRESETS
+local Anim = {
+    Slow = TweenInfo.new(6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+    Normal = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+    Fast = TweenInfo.new(0.15, Enum.EasingStyle.Quad),
+    Open = TweenInfo.new(0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out, 0.8),
+    Close = TweenInfo.new(0.35, Enum.EasingStyle.Quad)
+}
+
+-- FOV CIRCLE
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Radius = 220
+FOVCircle.Thickness = 2
+FOVCircle.Color = C.MainGreen
+FOVCircle.Transparency = 0.5
+FOVCircle.Filled = false
+FOVCircle.Visible = false
+
+-- GLOBAL SETTINGS
+_G = setmetatable({}, {__index = _G})
+_G.AimlockEnabled = false
+_G.StatusHudEnabled = true
+_G.WallCheckEnabled = false
+_G.AutoAirEnabled = false
+_G.FOVEnabled = false
+_G.FOVSize = 220
+_G.AimSpeedEnabled = true
+_G.AimSpeed = 75
+_G.PredictionEnabled = true
+_G.AimPrediction = 65
+_G.PriorityESPEnabled = true
+_G.TargetPart = "Head"
+
+local PriorityList = {}
+local JumpData = {}
+local CurrentTarget = nil
+local DragHud, StartPos, DragOffset
+
+-- GUI BASE
+local SG = Instance.new("ScreenGui")
+SG.Name = "AlienUI"
+SG.Parent = game.CoreGui
+SG.ResetOnSpawn = false
+SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+SG.DisplayOrder = 9999
+
+local FULL_SIZE = UDim2.new(0,520,0,470)
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0,0,0,0)
+Main.Position = UDim2.new(0.5,-260,0.5,-235)
+Main.BackgroundColor3 = C.DarkBG
+Main.Visible = false
+Main.ClipsDescendants = true
+Main.Parent = SG
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0.03,0)
+
+local InnerBorder = Instance.new("UIStroke", Main)
+InnerBorder.Color = C.MainGreen
+InnerBorder.Thickness = 2
+InnerBorder.Transparency = 1
+
+local Glow = Instance.new("UIStroke", Main)
+Glow.Color = C.MainGreen
+Glow.Thickness = 6
+Glow.Transparency = 0.8
+TweenService:Create(Glow, Anim.Slow, {Transparency = 0.5}):Play()
+
+-- TOGGLE BUTTON
+local ToggleContainer = Instance.new("Frame")
+ToggleContainer.Size = UDim2.new(0,110,0,34)
+ToggleContainer.Position = UDim2.new(0,25,0.5,-17)
+ToggleContainer.BackgroundColor3 = C.DarkBG
+ToggleContainer.Parent = SG
+Instance.new("UICorner", ToggleContainer).CornerRadius = UDim.new(0.02,0)
+
+local ToggleStroke = Instance.new("UIStroke", ToggleContainer)
+ToggleStroke.Color = C.MainGreen
+ToggleStroke.Thickness = 2
+ToggleStroke.Transparency = 0.6
+TweenService:Create(ToggleStroke, Anim.Slow, {Transparency = 0.2}):Play()
+
+local ToggleBtn = Instance.new("TextButton", ToggleContainer)
+ToggleBtn.Size = UDim2.new(1,0,1,0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = "Toggle GUI"
+ToggleBtn.TextColor3 = C.MainGreen
+ToggleBtn.Font = Enum.Font.GothamMedium
+ToggleBtn.TextSize = 14
+
+local MenuOpen = false
+ToggleBtn.MouseButton1Click:Connect(function()
+    PlaySound(Sounds.ToggleGUI)
+    MenuOpen = not MenuOpen
+    if MenuOpen then
+        Main.Visible = true
+        TweenService:Create(Main, Anim.Open, {Size = FULL_SIZE}):Play()
+        task.wait(0.1)
+        TweenService:Create(InnerBorder, Anim.Normal, {Transparency = 0}):Play()
+    else
+        TweenService:Create(InnerBorder, Anim.Close, {Transparency = 1}):Play()
+        TweenService:Create(Main, Anim.Close, {Size = UDim2.new(0,0,0,0)}):Play()
+        task.wait(0.45)
+        Main.Visible = false
+    end
+end)
+
+-- TOP BAR
+local TopBar = Instance.new("Frame", Main)
+TopBar.Size = UDim2.new(1,0,0,40)
+TopBar.BackgroundTransparency = 0.92
+TopBar.BackgroundColor3 = C.DarkBG
+TopBar.ZIndex = 10
+
+local TitleLabel = Instance.new("TextLabel", TopBar)
+TitleLabel.Size = UDim2.new(0,150,1,0)
+TitleLabel.Position = UDim2.new(0,45,0,0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "ALIENWARE"
+TitleLabel.Font = Enum.Font.GothamBlack
+TitleLabel.TextColor3 = C.MainGreen
+TitleLabel.TextSize = 20
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local CloseBtn = Instance.new("TextButton", TopBar)
+CloseBtn.Size = UDim2.new(0,32,0,32)
+CloseBtn.Position = UDim2.new(1,-36,0.5,-16)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "✕"
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextColor3 = C.MainGreen
+CloseBtn.TextSize = 26
+CloseBtn.MouseEnter:Connect(function() TweenService:Create(CloseBtn, Anim.Fast, {TextSize = 30}):Play() end)
+CloseBtn.MouseLeave:Connect(function() TweenService:Create(CloseBtn, Anim.Fast, {TextSize = 26}):Play() end)
+CloseBtn.MouseButton1Click:Connect(function() if MenuOpen then ToggleBtn:Click() end end)
+-- STATUS HUD (HIDDEN BY DEFAULT)
+local StatusHud = Instance.new("Frame")
+StatusHud.Size = UDim2.new(0,240,0,130)
+StatusHud.Position = UDim2.new(0.02,0,0.72,0)
+StatusHud.BackgroundColor3 = Color3.new(0,0,0)
+StatusHud.BackgroundTransparency = 0.2
+StatusHud.Visible = false
+StatusHud.Parent = SG
+Instance.new("UICorner", StatusHud).CornerRadius = UDim.new(0.03,0)
+
+local HudOutline = Instance.new("UIStroke", StatusHud)
+HudOutline.Color = C.MainGreen
+HudOutline.Thickness = 2
+HudOutline.Transparency = 0.3
+
+local AvatarContainer = Instance.new("Frame", StatusHud)
+AvatarContainer.Size = UDim2.new(0,45,0,45)
+AvatarContainer.Position = UDim2.new(0,10,0,10)
+AvatarContainer.BackgroundColor3 = Color3.fromHex("#222222")
+Instance.new("UICorner", AvatarContainer).CornerRadius = UDim.new(0.5,0)
+
+local Avatar = Instance.new("ImageLabel", AvatarContainer)
+Avatar.Size = UDim2.new(1,0,1,0)
+Avatar.BackgroundTransparency = 1
+Avatar.Image = "rbxassetid://15485995347"
+
+local HudName = Instance.new("TextLabel", StatusHud)
+HudName.Size = UDim2.new(1,-70,0,20)
+HudName.Position = UDim2.new(0,65,0,12)
+HudName.BackgroundTransparency = 1
+HudName.Text = "No Target"
+HudName.Font = Enum.Font.GothamBold
+HudName.TextColor3 = C.White
+HudName.TextSize = 16
+HudName.TextXAlignment = Enum.TextXAlignment.Left
+
+local HudPart = Instance.new("TextLabel", StatusHud)
+HudPart.Size = UDim2.new(1,-70,0,16)
+HudPart.Position = UDim2.new(0,65,0,32)
+HudPart.BackgroundTransparency = 1
+HudPart.Text = "Target: -"
+HudPart.Font = Enum.Font.GothamMedium
+HudPart.TextColor3 = C.MainGreen
+HudPart.TextSize = 14
+HudPart.TextXAlignment = Enum.TextXAlignment.Left
+
+local HudDist = Instance.new("TextLabel", StatusHud)
+HudDist.Size = UDim2.new(1,-70,0,16)
+HudDist.Position = UDim2.new(0,65,0,50)
+HudDist.BackgroundTransparency = 1
+HudDist.Text = "Distance: -"
+HudDist.Font = Enum.Font.GothamMedium
+HudDist.TextColor3 = C.White
+HudDist.TextSize = 14
+HudDist.TextXAlignment = Enum.TextXAlignment.Left
+
+local HealthBg = Instance.new("Frame", StatusHud)
+HealthBg.Size = UDim2.new(1,-20,0,12)
+HealthBg.Position = UDim2.new(0,10,0,70)
+HealthBg.BackgroundColor3 = Color3.fromHex("#222222")
+Instance.new("UICorner", HealthBg).CornerRadius = UDim.new(1,0)
+
+local HealthBar = Instance.new("Frame", HealthBg)
+HealthBar.Size = UDim2.new(1,0,1,0)
+HealthBar.BackgroundColor3 = C.MainGreen
+Instance.new("UICorner", HealthBar).CornerRadius = UDim.new(1,0)
+
+local HudHealthTxt = Instance.new("TextLabel", StatusHud)
+HudHealthTxt.Size = UDim2.new(1,-20,0,14)
+HudHealthTxt.Position = UDim2.new(0,10,0,88)
+HudHealthTxt.BackgroundTransparency = 1
+HudHealthTxt.Text = "0 / 0"
+HudHealthTxt.Font = Enum.Font.GothamBold
+HudHealthTxt.TextColor3 = C.White
+HudHealthTxt.TextSize = 13
+HudHealthTxt.TextXAlignment = Enum.TextXAlignment.Left
+
+-- AIM AT PART SELECTOR — BELOW HUD, HIDDEN BY DEFAULT
+local PartCon = Instance.new("Frame")
+PartCon.Size = UDim2.new(0,240,0,38)
+PartCon.Position = UDim2.new(0.02,0,0.88,0)
+PartCon.BackgroundColor3 = Color3.fromHex("#0A0F0D")
+PartCon.BackgroundTransparency = 0.3
+PartCon.Visible = false
+PartCon.Parent = SG
+Instance.new("UICorner", PartCon).CornerRadius = UDim.new(0.03,0)
+
+local PartLab = Instance.new("TextLabel", PartCon)
+PartLab.Size = UDim2.new(1,-90,1,0)
+PartLab.Position = UDim2.new(0,12,0,0)
+PartLab.BackgroundTransparency = 1
+PartLab.Text = "Aim At Part"
+PartLab.Font = Enum.Font.GothamMedium
+PartLab.TextColor3 = Color3.new(0.9,0.9,0.9)
+PartLab.TextSize = 17
+PartLab.TextXAlignment = Enum.TextXAlignment.Left
+
+local PartBtn = Instance.new("TextButton", PartCon)
+PartBtn.Size = UDim2.new(0,75,0,26)
+PartBtn.Position = UDim2.new(1,-87,0.5,-13)
+PartBtn.BackgroundColor3 = C.InputBg
+PartBtn.Text = _G.TargetPart
+PartBtn.Font = Enum.Font.GothamBold
+PartBtn.TextColor3 = C.MainGreen
+PartBtn.TextSize = 14
+Instance.new("UICorner", PartBtn).CornerRadius = UDim.new(0.3,0)
+
+local Parts = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+PartBtn.MouseButton1Click:Connect(function()
+    PlaySound(Sounds.Click)
+    local Cur = table.find(Parts, _G.TargetPart) or 1
+    _G.TargetPart = Parts[Cur%#Parts + 1]
+    PartBtn.Text = _G.TargetPart
+end)
+
+-- DRAG LOGIC
+StatusHud.InputBegan:Connect(function(I)
+    if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then
+        DragHud = true
+        StartPos = StatusHud.Position
+        DragOffset = I.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(I)
+    if DragHud and (I.UserInputType == Enum.UserInputType.MouseMovement or I.UserInputType == Enum.UserInputType.Touch) then
+        local Delta = I.Position - DragOffset
+        StatusHud.Position = UDim2.new(StartPos.X.Scale, StartPos.X.Offset + Delta.X, StartPos.Y.Scale, StartPos.Y.Offset + Delta.Y)
+        PartCon.Position = StatusHud.Position + UDim2.new(0,0,0,140)
+    end
+end)
+UserInputService.InputEnded:Connect(function() DragHud = nil end)
+
+-- SIDEBAR & TABS
+local SideBar = Instance.new("Frame", Main)
+SideBar.Size = UDim2.new(0,65,1,-40)
+SideBar.Position = UDim2.new(0,0,0,40)
+SideBar.BackgroundTransparency = 0.85
+SideBar.BackgroundColor3 = C.SideBG
+SideBar.ZIndex = 10
+
+local Content = Instance.new("Frame", Main)
+Content.Size = UDim2.new(1,-75,1,-50)
+Content.Position = UDim2.new(0,70,0,45)
+Content.BackgroundTransparency = 1
+Content.ZIndex = 10
+
+local Tabs = {}
+for i=1,2 do
+    Tabs[i] = Instance.new("Frame", Content)
+    Tabs[i].Size = UDim2.new(1,0,1,0)
+    Tabs[i].BackgroundTransparency = 1
+    Tabs[i].Visible = i == 1
+end
+
+-- TAB 1: COMBAT
+local CombatHeader = Instance.new("TextLabel", Tabs[1])
+CombatHeader.Size = UDim2.new(1,0,0,30)
+CombatHeader.Position = UDim2.new(0,10,0,5)
+CombatHeader.BackgroundTransparency = 1
+CombatHeader.Text = "COMBAT"
+CombatHeader.Font = Enum.Font.GothamBold
+CombatHeader.TextColor3 = C.MainGreen
+CombatHeader.TextSize = 20
+CombatHeader.TextXAlignment = Enum.TextXAlignment.Left
+
+local CombatDivider = Instance.new("Frame", Tabs[1])
+CombatDivider.Size = UDim2.new(1,-20,0,2)
+CombatDivider.Position = UDim2.new(0,10,0,38)
+CombatDivider.BackgroundColor3 = C.MainGreen
+CombatDivider.BackgroundTransparency = 0.3
+
+-- TOGGLE FUNCTION
+local function MakeToggle(Name, PosY, Key)
+    local Con = Instance.new("Frame", Tabs[1])
+    Con.Size = UDim2.new(1,-20,0,38)
+    Con.Position = UDim2.new(0,10,0,PosY)
+    Con.BackgroundTransparency = 0.92
+    Con.BackgroundColor3 = C.DarkBG
+    Con.MouseEnter:Connect(function() TweenService:Create(Con, Anim.Fast, {BackgroundTransparency = 0.85}):Play() end)
+    Con.MouseLeave:Connect(function() TweenService:Create(Con, Anim.Fast, {BackgroundTransparency = 0.92}):Play() end)
+
+    local Lab = Instance.new("TextLabel", Con)
+    Lab.Size = UDim2.new(1,-65,1,0)
+    Lab.Position = UDim2.new(0,12,0,0)
+    Lab.BackgroundTransparency = 1
+    Lab.Text = Name
+    Lab.Font = Enum.Font.GothamMedium
+    Lab.TextColor3 = Color3.new(0.9,0.9,0.9)
+    Lab.TextSize = 17
+    Lab.TextXAlignment = Enum.TextXAlignment.Left
+
+    local Bg = Instance.new("Frame", Con)
+    Bg.Size = UDim2.new(0,40,0,22)
+    Bg.Position = UDim2.new(1,-52,0.5,-11)
+    Bg.BackgroundColor3 = _G[Key] and C.MainGreen or C.ToggleOffBg
+    Instance.new("UICorner", Bg).CornerRadius = UDim.new(1,0)
+
+    local Knob = Instance.new("Frame", Bg)
+    Knob.Size = UDim2.new(0,18,0,18)
+    Knob.Position = _G[Key] and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+    Knob.BackgroundColor3 = C.ToggleOffKnob
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1,0)
+
+    Bg.InputBegan:Connect(function(I)
+        if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then
+            _G[Key] = not _G[Key]
+            PlaySound(Sounds.Click)
+            TweenService:Create(Bg, Anim.Fast, {BackgroundColor3 = _G[Key] and C.MainGreen or C.ToggleOffBg}):Play()
+            TweenService:Create(Knob, Anim.Fast, {Position = _G[Key] and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}):Play()
+        end
+    end)
+end
+
+-- SLIDER FUNCTIONS
+local function MakeFOVSlider(Name, PosY, ToggleKey, ValKey, Min, Max, Def)
+    local Con = Instance.new("Frame", Tabs[1])
+    Con.Size = UDim2.new(1,-20,0,55)
+    Con.Position = UDim2.new(0,10,0,PosY)
+    Con.BackgroundTransparency = 0.92
+    Con.BackgroundColor3 = C.DarkBG
+    Con.MouseEnter:Connect(function() TweenService:Create(Con, Anim.Fast, {BackgroundTransparency = 0.85}):Play() end)
+    Con.MouseLeave:Connect(function() TweenService:Create(Con, Anim.Fast, {BackgroundTransparency = 0.92}):Play() end)
+
+    local Bg = Instance.new("Frame", Con)
+    Bg.Size = UDim2.new(0,40,0,22)
+    Bg.Position = UDim2.new(0,8,0,6)
+    Bg.BackgroundColor3 = _G[ToggleKey] and C.MainGreen or C.ToggleOffBg
+    Instance.new("UICorner", Bg).CornerRadius = UDim.new(1,0)
+
+    local Knob = Instance.new("Frame", Bg)
+    Knob.Size = UDim2.new(0,18,0,18)
+    Knob.Position = _G[ToggleKey] and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+    Knob.BackgroundColor3 = C.ToggleOffKnob
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1,0)
+
+    local Lab = Instance.new("TextLabel", Con)
+    Lab.Size = UDim2.new(1,-60,0,20)
+    Lab.Position = UDim2.new(0,55,0,7)
+    Lab.BackgroundTransparency = 1
+    Lab.Text = Name
+    Lab.Font = Enum.Font.GothamMedium
+    Lab.TextColor3 = Color3.new(0.9,0.9,0.9)
+    Lab.TextSize = 17
+    Lab.TextXAlignment = Enum.TextXAlignment.Left
+
+    local ValLab = Instance.new("TextLabel", Con)
+    ValLab.Size = UDim2.new(0,45,0,20)
+    ValLab.Position = UDim2.new(1,-55,0,7)
+    ValLab.BackgroundTransparency = 1
+    ValLab.Text = Def.."px"
+    ValLab.Font = Enum.Font.GothamBold
+    ValLab.TextColor3 = C.MainGreen
+    ValLab.TextSize = 15
+    ValLab.TextXAlignment = Enum.TextXAlignment.Right
+
+    local Track = Instance.new("Frame", Con)
+    Track.Size = UDim2.new(1,-25,0,5)
+    Track.Position = UDim2.new(0,12,0,35)
+    Track.BackgroundColor3 = Color3.fromHex("#333333")
+    Instance.new("UICorner", Track).CornerRadius = UDim.new(1,0)
+
+    local Fill = Instance.new("Frame", Track)
+    Fill.Size = UDim2.new((Def-Min)/(Max-Min),0,1,0)
+    Fill.BackgroundColor3 = C.MainGreen
+    Instance.new("UICorner", Fill).CornerRadius = UDim.new(1,0)
+
+    local SliderKnob = Instance.new("Frame", Track)
+    SliderKnob.Size = UDim2.new(0,12,0,12)
+    SliderKnob.Position = UDim2.new((Def-Min)/(Max-Min),-6,0.5,-6)
+    SliderKnob.BackgroundColor3 = C.MainGreen
+    Instance.new("UICorner", SliderKnob).CornerRadius = UDim.new(1,0)
+
+    _G[ValKey] = Def
+    local Drag = false
+
+    Bg.InputBegan:Connect(function(I)
+        if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then
+            _G[ToggleKey] = not _G[ToggleKey]
+            PlaySound(Sounds.Click)
+            TweenService:Create(Bg, Anim.Fast, {BackgroundColor3 = _G[ToggleKey] and C.MainGreen or C.ToggleOffBg}):Play()
+            TweenService:Create(Knob, Anim.Fast, {Position = _G[ToggleKey] and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}):Play()
+            FOVCircle.Visible = _G[ToggleKey]
+        end
+    end)
+
+    Track.InputBegan:Connect(function(I)
+        if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then Drag = true end
+    end)
+    UserInputService.InputChanged:Connect(function(I)
+        if Drag and (I.UserInputType == Enum.UserInputType.MouseMovement or I.UserInputType == Enum.UserInputType.Touch) then
+            local Pos = I.Position
+            local RelX = Pos.X - Track.AbsolutePosition.X
+            local Ratio = Math.clamp(RelX / Track.AbsoluteSize.X, 0, 1)
+            _G[ValKey] = Math.floor(Min + (Max - Min) * Ratio)
+            ValLab.Text = _G[ValKey].."px"
+            Fill.Size = UDim2.new(Ratio, 0, 1, 0)
+            SliderKnob.Position = UDim2.new(Ratio, -6, 0.5, -6)
+            FOVCircle.Radius = _G[ValKey]
+        end
+    end)
+    UserInputService.InputEnded:Connect(function() Drag = false end)
+end
+
+local function MakeToggleSlider(Name, PosY, ToggleKey, ValKey, Min, Max, Def, Suffix)
+    Suffix = Suffix or ""
+    local Con = Instance.new("Frame", Tabs[1])
+    Con.Size = UDim2.new(1,-20,0,55)
+    Con.Position = UDim2.new(0,10,0,PosY)
+    Con.BackgroundTransparency = 0.92
+    Con.BackgroundColor3 = C.DarkBG
+    Con.MouseEnter:Connect(function() TweenService:Create(Con, Anim.Fast, {BackgroundTransparency = 0.85}):Play() end)
+    Con.MouseLeave:Connect(function() TweenService:Create(Con, Anim.Fast, {BackgroundTransparency = 0.92}):Play() end)
+
+    local Bg = Instance.new("Frame", Con)
+    Bg.Size = UDim2.new(0,40,0,22)
+    Bg.Position = UDim2.new(0,8,0,6)
+    Bg.BackgroundColor3 = _G[ToggleKey] and C.MainGreen or C.ToggleOffBg
+    Instance.new("UICorner", Bg).CornerRadius = UDim.new(1,0)
+
+    local Knob = Instance.new("Frame", Bg)
+    Knob.Size = UDim2.new(0,18,0,18)
+    Knob.Position = _G[ToggleKey] and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+    Knob.BackgroundColor3 = C.ToggleOffKnob
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1,0)
+
+    local Lab = Instance.new("TextLabel", Con)
+    Lab.Size = UDim2.new(1,-60,0,20)
+    Lab.Position = UDim2.new(0,55,0,7)
+    Lab.BackgroundTransparency = 1
+    Lab.Text = Name
+    Lab.Font = Enum.Font.GothamMedium
+    Lab.TextColor3 = Color3.new(0.9,0.9,0.9)
+    Lab.TextSize = 17
+    Lab.TextXAlignment = Enum.TextXAlignment.Left
+
+    local ValLab = Instance.new("TextLabel", Con)
+    ValLab.Size = UDim2.new(0,45,0,20)
+    ValLab.Position = UDim2.new(1,-55,0,7)
+    ValLab.BackgroundTransparency = 1
+    ValLab.Text = Def..Suffix
+    ValLab.Font = Enum.Font.GothamBold
+    ValLab.TextColor3 = C.MainGreen
+    ValLab.TextSize = 15
+    ValLab.TextXAlignment = Enum.TextXAlignment.Right
+
+    local Track = Instance.new("Frame", Con)
+    Track.Size = UDim2.new(1,-25,0,5)
+    Track.Position = UDim2.new(0,12,0,35)
+    Track.BackgroundColor3 = Color3.fromHex("#333333")
+    Instance.new("UICorner", Track).CornerRadius = UDim.new(1,0)
+
+    local Fill = Instance.new("Frame", Track)
+    Fill.Size = UDim2.new((Def-Min)/(Max-Min),0,1,0)
+    Fill.BackgroundColor3 = C.MainGreen
+    Instance.new("UICorner", Fill).CornerRadius = UDim.new(1,0)
+
+    local SliderKnob = Instance.new("Frame", Track)
+    SliderKnob.Size = UDim2.new(0,12,0,12)
+    SliderKnob.Position = UDim2.new((Def-Min)/(Max-Min),-6,0.5,-6)
+    SliderKnob.BackgroundColor3 = C.MainGreen
+    Instance.new("UICorner", SliderKnob).CornerRadius = UDim.new(1,0)
+
+    _G[ValKey] = Def
+    local Drag = false
+
+    Bg.InputBegan:Connect(function(I)
+        if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then
+            _G[ToggleKey] = not _G[ToggleKey]
+            PlaySound(Sounds.Click)
+            TweenService:Create(Bg, Anim.Fast, {BackgroundColor3 = _G[ToggleKey] and C.MainGreen or C.ToggleOffBg}):Play()
+            TweenService:Create(Knob, Anim.Fast, {Position = _G[ToggleKey] and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}):Play()
+        end
+    end)
+
+    Track.InputBegan:Connect(function(I)
+        if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then Drag = true end
+    end)
+    UserInputService.InputChanged:Connect(function(I)
+        if Drag and _G[ToggleKey] and (I.UserInputType == Enum.UserInputType.MouseMovement or I.UserInputType == Enum.UserInputType.Touch) then
+            local Pos = I.Position
+            local RelX = Pos.X - Track.AbsolutePosition.X
+            local Ratio = Math.clamp(RelX / Track.AbsoluteSize.X, 0, 1)
+            _G[ValKey] = Math.floor(Min + (Max - Min) * Ratio)
+            ValLab.Text = tostring(_G[ValKey])..Suffix
+            Fill.Size = UDim2.new(Ratio, 0, 1, 0)
+            SliderKnob.Position = UDim2.new(Ratio, -6, 0.5, -6)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function() Drag = false end)
+end
+
+-- TAB1 FEATURES
+MakeToggle("Aimlock", 50, "AimlockEnabled")
+MakeToggle("Show Status HUD", 92, "StatusHudEnabled")
+MakeToggle("Wall Check", 134, "WallCheckEnabled")
+MakeToggle("Auto Air", 176, "AutoAirEnabled")
+MakeFOVSlider("FOV Size", 218, "FOVEnabled", "FOVSize", 50, 800, 220)
+MakeToggleSlider("Aim Speed", 278, "AimSpeedEnabled", "AimSpeed", 10, 100, 75, "")
+MakeToggleSlider("Prediction", 338, "PredictionEnabled", "AimPrediction", 0, 100, 65, "")
+-- ============= TAB 2: PRIORITY TARGET =============
+local PriorityHeader = Instance.new("TextLabel", Tabs[2])
+PriorityHeader.Size = UDim2.new(1,0,0,30)
+PriorityHeader.Position = UDim2.new(0,10,0,5)
+PriorityHeader.BackgroundTransparency = 1
+PriorityHeader.Text = "PRIORITY TARGET"
+PriorityHeader.Font = Enum.Font.GothamBold
+PriorityHeader.TextColor3 = C.MainGreen
+PriorityHeader.TextSize = 20
+PriorityHeader.TextXAlignment = Enum.TextXAlignment.Left
+
+local PriorityDivider = Instance.new("Frame", Tabs[2])
+PriorityDivider.Size = UDim2.new(1,-20,0,2)
+PriorityDivider.Position = UDim2.new(0,10,0,38)
+PriorityDivider.BackgroundColor3 = C.MainGreen
+PriorityDivider.BackgroundTransparency = 0.3
+
+local SearchContainer = Instance.new("Frame", Tabs[2])
+SearchContainer.Size = UDim2.new(1,-20,0,40)
+SearchContainer.Position = UDim2.new(0,10,0,55)
+SearchContainer.BackgroundColor3 = C.InputBg
+Instance.new("UICorner", SearchContainer).CornerRadius = UDim.new(0.04,0)
+
+local SearchBox = Instance.new("TextBox", SearchContainer)
+SearchBox.Size = UDim2.new(1,-15,1,0)
+SearchBox.Position = UDim2.new(0,8,0,0)
+SearchBox.BackgroundTransparency = 1
+SearchBox.Text = ""
+SearchBox.PlaceholderText = "Enter name..."
+SearchBox.Font = Enum.Font.GothamMedium
+SearchBox.TextColor3 = C.White
+SearchBox.PlaceholderColor3 = Color3.fromHex("#777777")
+SearchBox.TextSize = 16
+
+local ListContainer = Instance.new("Frame", Tabs[2])
+ListContainer.Size = UDim2.new(1,-20,0,220)
+ListContainer.Position = UDim2.new(0,10,0,100)
+ListContainer.BackgroundColor3 = C.InputBg
+Instance.new("UICorner", ListContainer).CornerRadius = UDim.new(0.03,0)
+
+local ListLayout = Instance.new("UIListLayout", ListContainer)
+ListLayout.Padding = UDim.new(0,6)
+ListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ListLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+
+local EspToggleCon = Instance.new("Frame", Tabs[2])
+EspToggleCon.Size = UDim2.new(1,-20,0,38)
+EspToggleCon.Position = UDim2.new(0,10,0,330)
+EspToggleCon.BackgroundTransparency = 0.92
+EspToggleCon.BackgroundColor3 = C.DarkBG
+
+local EspLab = Instance.new("TextLabel", EspToggleCon)
+EspLab.Size = UDim2.new(1,-65,1,0)
+EspLab.Position = UDim2.new(0,12,0,0)
+EspLab.BackgroundTransparency = 1
+EspLab.Text = "Show Tracer ESP"
+EspLab.Font = Enum.Font.GothamMedium
+EspLab.TextColor3 = Color3.new(0.9,0.9,0.9)
+EspLab.TextSize = 17
+
+local EspBg = Instance.new("Frame", EspToggleCon)
+EspBg.Size = UDim2.new(0,40,0,22)
+EspBg.Position = UDim2.new(1,-52,0.5,-11)
+EspBg.BackgroundColor3 = _G.PriorityESPEnabled and C.MainGreen or C.ToggleOffBg
+Instance.new("UICorner", EspBg).CornerRadius = UDim.new(1,0)
+
+local EspKnob = Instance.new("Frame", EspBg)
+EspKnob.Size = UDim2.new(0,18,0,18)
+EspKnob.Position = _G.PriorityESPEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+EspKnob.BackgroundColor3 = C.ToggleOffKnob
+Instance.new("UICorner", EspKnob).CornerRadius = UDim.new(1,0)
+
+EspBg.InputBegan:Connect(function(I)
+    if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then
+        _G.PriorityESPEnabled = not _G.PriorityESPEnabled
+        PlaySound(Sounds.Click)
+        TweenService:Create(EspBg, Anim.Fast, {BackgroundColor3 = _G.PriorityESPEnabled and C.MainGreen or C.ToggleOffBg}):Play()
+        TweenService:Create(EspKnob, Anim.Fast, {Position = _G.PriorityESPEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}):Play()
+    end
+end)
+
+local function AddToPriority(Player)
+    if not Player or Player == LocalPlayer or PriorityList[Player.UserId] then return end
+    PlaySound(Sounds.Click)
+
+    local Item = Instance.new("Frame")
+    Item.Size = UDim2.new(0.9,0,0,36)
+    Item.BackgroundColor3 = C.DarkBG
+    Instance.new("UICorner", Item).CornerRadius = UDim.new(0.04,0)
+
+    local NameLab = Instance.new("TextLabel", Item)
+    NameLab.Size = UDim2.new(1,-80,1,0)
+    NameLab.Position = UDim2.new(0,10,0,0)
+    NameLab.BackgroundTransparency = 1
+    NameLab.Text = Player.Name
+    NameLab.Font = Enum.Font.GothamMedium
+    NameLab.TextColor3 = C.White
+    NameLab.TextSize = 15
+    NameLab.TextXAlignment = Enum.TextXAlignment.Left
+
+    local RemoveBtn = Instance.new("TextButton", Item)
+    RemoveBtn.Size = UDim2.new(0,22,0,22)
+    RemoveBtn.Position = UDim2.new(1,-28,0.5,-11)
+    RemoveBtn.BackgroundTransparency = 1
+    RemoveBtn.Text = "✕"
+    RemoveBtn.Font = Enum.Font.GothamBold
+    RemoveBtn.TextColor3 = C.Red
+    RemoveBtn.TextSize = 18
+
+    Item.Parent = ListContainer
+    PriorityList[Player.UserId] = {
+        Player = Player,
+        Item = Item,
+        Tracer = Drawing.new("Line"),
+        NameTag = Drawing.new("Text")
+    }
+    local Data = PriorityList[Player.UserId]
+    Data.Tracer.Color = C.MainGreen
+    Data.Tracer.Thickness = 1.5
+    Data.NameTag.Color = C.MainGreen
+    Data.NameTag.Size = 12
+
+    RemoveBtn.MouseButton1Click:Connect(function()
+        PlaySound(Sounds.Click)
+        Data.Tracer:Remove()
+        Data.NameTag:Remove()
+        Item:Destroy()
+        PriorityList[Player.UserId] = nil
+    end)
+end
+
+SearchBox.FocusLost:Connect(function(EnterPressed)
+    if not EnterPressed or SearchBox.Text == "" then return end
+    local Query = SearchBox.Text:lower()
+    SearchBox.Text = ""
+    for _, Player in pairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer and Player.Name:lower():find(Query, 1, true) then
+            AddToPriority(Player)
+            break
+        end
+    end
+end)
+
+-- TAB SWITCH LOGIC
+local TabIndicator = Instance.new("Frame",SideBar)
+TabIndicator.Size = UDim2.new(0,5,0,40)
+TabIndicator.Position = UDim2.new(0,5,0.1,0)
+TabIndicator.BackgroundColor3 = C.MainGreen
+Instance.new("UICorner",TabIndicator).CornerRadius = UDim.new(1,0)
+
+local TabIcons = {"⚔️", "🎯"}
+for i=1,2 do
+    local Btn = Instance.new("TextButton",SideBar)
+    Btn.Size = UDim2.new(1,-10,0,48)
+    Btn.Position = UDim2.new(0.05,0, 0.12 + ((i-1)*0.3),0)
+    Btn.BackgroundTransparency = 1
+    Btn.Text = TabIcons[i]
+    Btn.Font = Enum.Font.GothamBold
+    Btn.TextColor3 = C.MainGreen
+    Btn.TextSize = 22
+    Btn.MouseButton1Click:Connect(function()
+        PlaySound(Sounds.TabSwitch)
+        TweenService:Create(TabIndicator, Anim.Normal, {Position=UDim2.new(0,5, 0.12 + ((i-1)*0.3),0)}):Play()
+        for _,T in pairs(Tabs) do T.Visible=false end
+        Tabs[i].Visible = true
+    end)
+end
+
+-- MAIN AIM LOGIC
+local function CanSee(Part)
+    local Params = RaycastParams.new()
+    Params.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+    Params.FilterType = Enum.RaycastFilterType.Exclude
+    local Res = Workspace:Raycast(Camera.CFrame.Position, Part.Position - Camera.CFrame.Position, Params)
+    return not Res or Res.Instance == Part or Res.Instance:IsDescendantOf(Part.Parent)
+end
+
+local function IsValidTarget(Char)
+    local H = Char:FindFirstChild("Humanoid")
+    return H and H.Health>0 and not H.PlatformStand and not H.Sit
+end
+
+local function GetTargetPart(Char)
+    return Char:FindFirstChild(_G.TargetPart) or Char:FindFirstChild("Head")
+end
+
+RunService.RenderStepped:Connect(function()
+    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local TargetPos, BestDist, Center = nil, math.huge, Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local MaxFOV = _G.FOVEnabled and _G.FOVSize or math.huge
+    CurrentTarget = nil
+
+    local function Check(Ply)
+        if not Ply or not Ply.Character or not IsValidTarget(Ply.Character) then return end
+        local AimPart = GetTargetPart(Ply.Character)
+        local Pos, Vis = Camera:WorldToScreenPoint(AimPart.Position)
+        local D = (Vector2.new(Pos.X,Pos.Y)-Center).Magnitude
+        if Vis and D<MaxFOV and (not _G.WallCheckEnabled or CanSee(AimPart)) and D<BestDist then
+            BestDist=D; CurrentTarget=Ply
+            TargetPos = _G.PredictionEnabled and AimPart.Position + Ply.Character.HumanoidRootPart.Velocity*(_G.AimPrediction/100)*0.15 or AimPart.Position
+        end
+    end
+
+    if _G.AimlockEnabled then
+        if next(PriorityList) then for _,D in pairs(PriorityList) do Check(D.Player) end
+        else for _,P in pairs(Players:GetPlayers()) do if P~=LocalPlayer then Check(P) end end end
+        if TargetPos then Camera.CFrame = _G.AimSpeedEnabled and Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, TargetPos), _G.AimSpeed/500) or CFrame.new(Camera.CFrame.Position, TargetPos) end
+    end
+
+    if _G.AutoAirEnabled and CurrentTarget and CurrentTarget.Character then
+        local TargetHum = CurrentTarget.Character:FindFirstChild("Humanoid")
+        if TargetHum then
+            if not JumpData[CurrentTarget.UserId] then JumpData[CurrentTarget.UserId] = {OnGround = true, Shot = false} end
+            local Data = JumpData[CurrentTarget.UserId]
+            local IsInAir = TargetHum.FloorMaterial == Enum.Material.Air
+            if Data.OnGround and IsInAir and not Data.Shot then
+                if CanSee(GetTargetPart(CurrentTarget.Character)) then
+                    local Tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                    if Tool then Tool:Activate() end
+                end
+                Data.Shot = true
+            elseif not IsInAir then Data.Shot = false end
+            Data.OnGround = not IsInAir
+        end
+    end
+
+    local ScreenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
+    for Id,Data in pairs(PriorityList) do
+        local P = Data.Player
+        if P and P.Character and P.Character.PrimaryPart then
+            local Pos, Vis = Camera:WorldToScreenPoint(P.Character.PrimaryPart.Position)
+            local Show = _G.PriorityESPEnabled and Vis
+            Data.Tracer.Visible = Show
+            Data.NameTag.Visible = Show
+            if Show then
+                Data.Tracer.From = ScreenCenter
+                Data.Tracer.To = Vector2.new(Pos.X, Pos.Y)
+                Data.NameTag.Position = Vector2.new(Pos.X, Pos.Y - 22)
+                Data.NameTag.Text = P.Name
+            end
+        end
+    end
+
+    -- ✅ ONLY SHOW HUD & AIM PART WHEN THERE IS AN ACTIVE TARGET + TOGGLE ON
+    local HasValidTarget = CurrentTarget ~= nil and _G.StatusHudEnabled
+    StatusHud.Visible = HasValidTarget
+    PartCon.Visible = HasValidTarget
+
+    if HasValidTarget and CurrentTarget.Character then
+        local H = CurrentTarget.Character:FindFirstChild("Humanoid")
+        HudName.Text=CurrentTarget.Name; HudPart.Text="Target: ".._G.TargetPart
+        HudDist.Text="Distance: "..math.floor((GetTargetPart(CurrentTarget.Character).Position-Camera.CFrame.Position).Magnitude).." studs"
+        pcall(function() Avatar.Image = "rbxthumb://type=AvatarHeadShot&id="..CurrentTarget.UserId.."&w=150&h=150" end)
+        if H then HealthBar.Size=UDim2.new(math.max(0,H.Health)/math.max(1,H.MaxHealth),0,1,0); HudHealthTxt.Text=math.floor(H.Health).." / "..math.floor(H.MaxHealth) end
+    end
+end)
