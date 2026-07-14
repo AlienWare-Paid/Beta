@@ -1,5 +1,5 @@
 -- ==============================================
--- ✅ UPDATED: HUD & Aim Part Only Show When Target Exists
+-- ✅ UPDATED: Clean Title + Rotating Crosshair
 -- ==============================================
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -70,12 +70,31 @@ _G.PredictionEnabled = true
 _G.AimPrediction = 65
 _G.PriorityESPEnabled = true
 _G.TargetPart = "Head"
+-- HP RULES
+_G.MinTargetHP = 13
+_G.MinSelfHP = 13
 
 local PriorityList = {}
 local JumpData = {}
 local CurrentTarget = nil
 local DragHud, StartPos, DragOffset
+local AimlockToggleBg, AimlockToggleKnob
+local MenuOpen = false
+local CrosshairRot = 0
 
+-- 🎯 Q KEY TOGGLE
+UserInputService.InputBegan:Connect(function(Input, GameProcessed)
+    if GameProcessed then return end
+    if Input.KeyCode == Enum.KeyCode.Q then
+        _G.AimlockEnabled = not _G.AimlockEnabled
+        PlaySound(Sounds.Click)
+        if AimlockToggleBg and AimlockToggleKnob then
+            local NewState = _G.AimlockEnabled
+            TweenService:Create(AimlockToggleBg, Anim.Fast, {BackgroundColor3 = NewState and C.MainGreen or C.ToggleOffBg}):Play()
+            TweenService:Create(AimlockToggleKnob, Anim.Fast, {Position = NewState and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}):Play()
+        end
+    end
+end)
 -- GUI BASE
 local SG = Instance.new("ScreenGui")
 SG.Name = "AlienUI"
@@ -106,6 +125,22 @@ Glow.Thickness = 6
 Glow.Transparency = 0.8
 TweenService:Create(Glow, Anim.Slow, {Transparency = 0.5}):Play()
 
+-- 🎯 ROTATING CROSSHAIR (TOP-LEFT OF GUI)
+local Crosshair = Instance.new("Frame", Main)
+Crosshair.Size = UDim2.new(0,20,0,20)
+Crosshair.Position = UDim2.new(0,12,0,10)
+Crosshair.BackgroundTransparency = 1
+
+local CrossV = Instance.new("Frame", Crosshair)
+CrossV.Size = UDim2.new(0,2,1,0)
+CrossV.Position = UDim2.new(0.5,-1,0,0)
+CrossV.BackgroundColor3 = C.MainGreen
+
+local CrossH = Instance.new("Frame", Crosshair)
+CrossH.Size = UDim2.new(1,0,0,2)
+CrossH.Position = UDim2.new(0,0,0.5,-1)
+CrossH.BackgroundColor3 = C.MainGreen
+
 -- TOGGLE BUTTON
 local ToggleContainer = Instance.new("Frame")
 ToggleContainer.Size = UDim2.new(0,110,0,34)
@@ -128,7 +163,6 @@ ToggleBtn.TextColor3 = C.MainGreen
 ToggleBtn.Font = Enum.Font.GothamMedium
 ToggleBtn.TextSize = 14
 
-local MenuOpen = false
 ToggleBtn.MouseButton1Click:Connect(function()
     PlaySound(Sounds.ToggleGUI)
     MenuOpen = not MenuOpen
@@ -159,7 +193,7 @@ TitleLabel.BackgroundTransparency = 1
 TitleLabel.Text = "ALIENWARE"
 TitleLabel.Font = Enum.Font.GothamBlack
 TitleLabel.TextColor3 = C.MainGreen
-TitleLabel.TextSize = 20
+TitleLabel.TextSize = 18
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 local CloseBtn = Instance.new("TextButton", TopBar)
@@ -173,7 +207,8 @@ CloseBtn.TextSize = 26
 CloseBtn.MouseEnter:Connect(function() TweenService:Create(CloseBtn, Anim.Fast, {TextSize = 30}):Play() end)
 CloseBtn.MouseLeave:Connect(function() TweenService:Create(CloseBtn, Anim.Fast, {TextSize = 26}):Play() end)
 CloseBtn.MouseButton1Click:Connect(function() if MenuOpen then ToggleBtn:Click() end end)
--- STATUS HUD (HIDDEN BY DEFAULT)
+
+-- STATUS HUD
 local StatusHud = Instance.new("Frame")
 StatusHud.Size = UDim2.new(0,240,0,130)
 StatusHud.Position = UDim2.new(0.02,0,0.72,0)
@@ -250,7 +285,7 @@ HudHealthTxt.TextColor3 = C.White
 HudHealthTxt.TextSize = 13
 HudHealthTxt.TextXAlignment = Enum.TextXAlignment.Left
 
--- AIM AT PART SELECTOR — BELOW HUD, HIDDEN BY DEFAULT
+-- AIM PART SELECTOR
 local PartCon = Instance.new("Frame")
 PartCon.Size = UDim2.new(0,240,0,38)
 PartCon.Position = UDim2.new(0.02,0,0.88,0)
@@ -304,8 +339,9 @@ UserInputService.InputChanged:Connect(function(I)
     end
 end)
 UserInputService.InputEnded:Connect(function() DragHud = nil end)
-
--- SIDEBAR & TABS
+-- ==============================================
+-- UI TABS, CONTROLS & HELPERS
+-- ==============================================
 local SideBar = Instance.new("Frame", Main)
 SideBar.Size = UDim2.new(0,65,1,-40)
 SideBar.Position = UDim2.new(0,0,0,40)
@@ -344,7 +380,6 @@ CombatDivider.Position = UDim2.new(0,10,0,38)
 CombatDivider.BackgroundColor3 = C.MainGreen
 CombatDivider.BackgroundTransparency = 0.3
 
--- TOGGLE FUNCTION
 local function MakeToggle(Name, PosY, Key)
     local Con = Instance.new("Frame", Tabs[1])
     Con.Size = UDim2.new(1,-20,0,38)
@@ -376,6 +411,11 @@ local function MakeToggle(Name, PosY, Key)
     Knob.BackgroundColor3 = C.ToggleOffKnob
     Instance.new("UICorner", Knob).CornerRadius = UDim.new(1,0)
 
+    if Key == "AimlockEnabled" then
+        AimlockToggleBg = Bg
+        AimlockToggleKnob = Knob
+    end
+
     Bg.InputBegan:Connect(function(I)
         if I.UserInputType == Enum.UserInputType.MouseButton1 or I.UserInputType == Enum.UserInputType.Touch then
             _G[Key] = not _G[Key]
@@ -386,7 +426,6 @@ local function MakeToggle(Name, PosY, Key)
     end)
 end
 
--- SLIDER FUNCTIONS
 local function MakeFOVSlider(Name, PosY, ToggleKey, ValKey, Min, Max, Def)
     local Con = Instance.new("Frame", Tabs[1])
     Con.Size = UDim2.new(1,-20,0,55)
@@ -564,7 +603,7 @@ local function MakeToggleSlider(Name, PosY, ToggleKey, ValKey, Min, Max, Def, Su
     UserInputService.InputEnded:Connect(function() Drag = false end)
 end
 
--- TAB1 FEATURES
+-- CREATE SETTINGS
 MakeToggle("Aimlock", 50, "AimlockEnabled")
 MakeToggle("Show Status HUD", 92, "StatusHudEnabled")
 MakeToggle("Wall Check", 134, "WallCheckEnabled")
@@ -572,7 +611,8 @@ MakeToggle("Auto Air", 176, "AutoAirEnabled")
 MakeFOVSlider("FOV Size", 218, "FOVEnabled", "FOVSize", 50, 800, 220)
 MakeToggleSlider("Aim Speed", 278, "AimSpeedEnabled", "AimSpeed", 10, 100, 75, "")
 MakeToggleSlider("Prediction", 338, "PredictionEnabled", "AimPrediction", 0, 100, 65, "")
--- ============= TAB 2: PRIORITY TARGET =============
+
+-- TAB 2: PRIORITY TARGET
 local PriorityHeader = Instance.new("TextLabel", Tabs[2])
 PriorityHeader.Size = UDim2.new(1,0,0,30)
 PriorityHeader.Position = UDim2.new(0,10,0,5)
@@ -656,12 +696,10 @@ end)
 local function AddToPriority(Player)
     if not Player or Player == LocalPlayer or PriorityList[Player.UserId] then return end
     PlaySound(Sounds.Click)
-
     local Item = Instance.new("Frame")
     Item.Size = UDim2.new(0.9,0,0,36)
     Item.BackgroundColor3 = C.DarkBG
     Instance.new("UICorner", Item).CornerRadius = UDim.new(0.04,0)
-
     local NameLab = Instance.new("TextLabel", Item)
     NameLab.Size = UDim2.new(1,-80,1,0)
     NameLab.Position = UDim2.new(0,10,0,0)
@@ -671,7 +709,6 @@ local function AddToPriority(Player)
     NameLab.TextColor3 = C.White
     NameLab.TextSize = 15
     NameLab.TextXAlignment = Enum.TextXAlignment.Left
-
     local RemoveBtn = Instance.new("TextButton", Item)
     RemoveBtn.Size = UDim2.new(0,22,0,22)
     RemoveBtn.Position = UDim2.new(1,-28,0.5,-11)
@@ -680,20 +717,13 @@ local function AddToPriority(Player)
     RemoveBtn.Font = Enum.Font.GothamBold
     RemoveBtn.TextColor3 = C.Red
     RemoveBtn.TextSize = 18
-
     Item.Parent = ListContainer
-    PriorityList[Player.UserId] = {
-        Player = Player,
-        Item = Item,
-        Tracer = Drawing.new("Line"),
-        NameTag = Drawing.new("Text")
-    }
+    PriorityList[Player.UserId] = {Player = Player, Item = Item, Tracer = Drawing.new("Line"), NameTag = Drawing.new("Text")}
     local Data = PriorityList[Player.UserId]
     Data.Tracer.Color = C.MainGreen
     Data.Tracer.Thickness = 1.5
     Data.NameTag.Color = C.MainGreen
     Data.NameTag.Size = 12
-
     RemoveBtn.MouseButton1Click:Connect(function()
         PlaySound(Sounds.Click)
         Data.Tracer:Remove()
@@ -715,7 +745,7 @@ SearchBox.FocusLost:Connect(function(EnterPressed)
     end
 end)
 
--- TAB SWITCH LOGIC
+-- TAB SWITCH
 local TabIndicator = Instance.new("Frame",SideBar)
 TabIndicator.Size = UDim2.new(0,5,0,40)
 TabIndicator.Position = UDim2.new(0,5,0.1,0)
@@ -740,7 +770,7 @@ for i=1,2 do
     end)
 end
 
--- MAIN AIM LOGIC
+-- HELPERS
 local function CanSee(Part)
     local Params = RaycastParams.new()
     Params.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
@@ -757,15 +787,36 @@ end
 local function GetTargetPart(Char)
     return Char:FindFirstChild(_G.TargetPart) or Char:FindFirstChild("Head")
 end
+-- ==============================================
+-- MAIN LOOP & ROTATING CROSSHAIR
+-- ==============================================
+RunService.RenderStepped:Connect(function(Delta)
+    -- 🎯 ROTATE CROSSHAIR ONLY WHEN GUI IS OPEN
+    if MenuOpen then
+        CrosshairRot += Delta * 180
+        Crosshair.Rotation = CrosshairRot % 360
+    end
 
-RunService.RenderStepped:Connect(function()
+    -- UPDATE FOV CIRCLE
     FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
     local TargetPos, BestDist, Center = nil, math.huge, Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
     local MaxFOV = _G.FOVEnabled and _G.FOVSize or math.huge
     CurrentTarget = nil
 
+    -- HP CHECK
+    local CanAim = false
+    if LocalPlayer.Character then
+        local MyHum = LocalPlayer.Character:FindFirstChild("Humanoid")
+        if MyHum and MyHum.Health >= _G.MinSelfHP then
+            CanAim = true
+        end
+    end
+
+    -- TARGET SCAN
     local function Check(Ply)
         if not Ply or not Ply.Character or not IsValidTarget(Ply.Character) then return end
+        local TargetHum = Ply.Character:FindFirstChild("Humanoid")
+        if not TargetHum or TargetHum.Health < _G.MinTargetHP then return end
         local AimPart = GetTargetPart(Ply.Character)
         local Pos, Vis = Camera:WorldToScreenPoint(AimPart.Position)
         local D = (Vector2.new(Pos.X,Pos.Y)-Center).Magnitude
@@ -775,12 +826,14 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    if _G.AimlockEnabled then
+    -- AIMLOCK
+    if _G.AimlockEnabled and CanAim then
         if next(PriorityList) then for _,D in pairs(PriorityList) do Check(D.Player) end
         else for _,P in pairs(Players:GetPlayers()) do if P~=LocalPlayer then Check(P) end end end
         if TargetPos then Camera.CFrame = _G.AimSpeedEnabled and Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, TargetPos), _G.AimSpeed/500) or CFrame.new(Camera.CFrame.Position, TargetPos) end
     end
 
+    -- AUTO AIR
     if _G.AutoAirEnabled and CurrentTarget and CurrentTarget.Character then
         local TargetHum = CurrentTarget.Character:FindFirstChild("Humanoid")
         if TargetHum then
@@ -798,6 +851,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
+    -- PRIORITY ESP
     local ScreenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
     for Id,Data in pairs(PriorityList) do
         local P = Data.Player
@@ -815,7 +869,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ✅ ONLY SHOW HUD & AIM PART WHEN THERE IS AN ACTIVE TARGET + TOGGLE ON
+    -- STATUS HUD
     local HasValidTarget = CurrentTarget ~= nil and _G.StatusHudEnabled
     StatusHud.Visible = HasValidTarget
     PartCon.Visible = HasValidTarget
